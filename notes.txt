@@ -1,0 +1,24 @@
+download = go mod download -json
+    matches what is downloaded
+
+gomodcache = $GOMODCACHE/cache/download/**/*.zip
+    matches what is downloaded (obviously)
+
+vendor_with_unused = vendor/modules.txt, drop wildcard replacements
+    matches what would be downloaded, superset of what is vendored
+
+vendor = vendor/modules.txt, drop wildcard replacements and modules that don't have packages
+    matches what is vendored
+
+listdeps_all = go list -deps -json all
+    subset of vendor
+
+listdeps_threedot = go list -deps -json ./...
+    subset of listdeps_all
+
+
+
+if there are no local replacements:
+    download == gomodcache == vendor_with_unused >= vendor >= listdeps_all >= listdeps_threedot
+
+local replacements do not appear in download or gomodcache (do appear in the others)
