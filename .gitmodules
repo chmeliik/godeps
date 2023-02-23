@@ -1,0 +1,8 @@
+[submodule "sandboxed-containers-operator"]
+	path = sandboxed-containers-operator
+	url = https://github.com/openshift/sandboxed-containers-operator.git
+	shallow = true
+[submodule "managed-gitops"]
+	path = managed-gitops
+	url = https://github.com/redhat-appstudio/managed-gitops.git
+	shallow = true

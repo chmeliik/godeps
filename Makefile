@@ -40,3 +40,9 @@ pip-compile:
 	pip install -U pip-tools && \
 	pip-compile pyproject.toml --generate-hashes && \
 	pip-compile pyproject.toml --generate-hashes --extra=dev -o requirements-dev.txt
+
+# Extras
+
+.PHONY: submodules
+submodules:
+	git submodule update --init
