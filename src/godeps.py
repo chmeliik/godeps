@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
+import difflib
 import json
 import logging
 import os
 import subprocess
+import tempfile
 from pathlib import Path
-from typing import Any, Iterator, Literal, NamedTuple, Optional, Self
+from typing import Any, ContextManager, Iterable, Iterator, Literal, NamedTuple, Optional, Self
 
 import pydantic
 
-logging.basicConfig(level="DEBUG", format="%(levelname)s: %(message)s")
+logging.basicConfig(level="DEBUG", format="godeps: %(message)s")
 log = logging.getLogger(__name__)
 
 
@@ -83,16 +86,15 @@ class GomodResolver:
         """Create a GomodResolver.
 
         :param module_dir: path to the root of a Go module
-        :param gomodcache: path to a GOMODCACHE directory (will be created if it doesn't exist)
+        :param gomodcache: absolute path to GOMODCACHE directory (gets created if it doesn't exist)
         :param go_executable: specify a different `go` executable
         """
         self.module_dir = module_dir
-        self.gomodcache = gomodcache.resolve()
+        self.gomodcache = gomodcache
         self.go_executable = go_executable
 
     def parse_download(self) -> set[NameVersion]:
         """Parse modules from `go mod download -json`."""
-        log.debug("parsing `go mod download -json`")
         return {
             NameVersion.from_module(module)
             for module in map(
@@ -104,7 +106,6 @@ class GomodResolver:
 
     def parse_list_deps(self, pattern: Literal["all", "./..."] = "all") -> set[NameVersion]:
         """Parse modules from `go list -deps -json ./...` or `go list -deps -json all`."""
-        log.debug("parsing `go list -deps -json %s`", pattern)
         return {
             NameVersion.from_module(package.module)
             for package in map(
@@ -119,7 +120,6 @@ class GomodResolver:
 
         https://go.dev/ref/mod#module-cache
         """
-        log.debug("parsing $GOMODCACHE/cache/download/**/*.zip")
         download_dir = self.gomodcache / "cache" / "download"
 
         def un_exclamation_mark(s: str) -> str:
@@ -134,16 +134,15 @@ class GomodResolver:
 
         return set(map(parse_zipfile_path, download_dir.rglob("*.zip")))
 
+    def vendor_deps(self) -> None:
+        """Run `go mod vendor` to vendor dependencies."""
+        self._run_go(["mod", "vendor"])
+
     def parse_vendor(self, drop_unused: bool = True) -> set[NameVersion]:
         """Parse modules from vendor/modules.txt.
 
         :param drop_unused: don't include modules that have no packages in modules.txt
         """
-        if drop_unused:
-            log.debug("parsing vendor/modules.txt")
-        else:
-            log.debug("parsing vendor/modules.txt (and keeping unused modules)")
-
         modules_txt = self.module_dir / "vendor" / "modules.txt"
 
         def parse_module_line(line: str) -> Module:
@@ -218,33 +217,120 @@ def _load_json_stream(json_stream: str) -> Iterator[dict[str, Any]]:
 
 
 def main() -> None:
+    """Run the CLI."""
     ap = argparse.ArgumentParser()
-    ap.add_argument("-d", "--module-dir", default=".")
-    ap.add_argument("--gomodcache", default="./gocache")
-    ap.add_argument("--go", default="go")
-    ap.add_argument("-o", "--output-dir", default=".")
+    ap.add_argument(
+        "-m", "--module-dir", default=".", help="path to Go module, defaults to current dir"
+    )
+    ap.add_argument(
+        "-c", "--gomodcache-dir", help="path to GOMODCACHE directory, defaults to a tmpdir"
+    )
+    ap.add_argument(
+        "-o",
+        "--output-dir",
+        default=".",
+        help="write output files to this directory, defaults to current dir",
+    )
+    ap.add_argument(
+        "--vendor", action="store_true", help="vendor dependencies instead of downloading"
+    )
+    ap.add_argument("--go", default="go", help="the go executable to use, defaults to 'go'")
 
     args = ap.parse_args()
 
     module_dir = Path(args.module_dir)
-    gomodcache = Path(args.gomodcache)
-    go_executable = str(Path(args.go).expanduser())
     output_dir = Path(args.output_dir)
+    go_executable = str(Path(args.go).expanduser())
 
-    resolver = GomodResolver(module_dir, gomodcache, go_executable)
+    if args.gomodcache_dir:
+        gomodcache_dir = Path(args.gomodcache_dir).resolve()
+        cleanup_context: ContextManager[Any] = contextlib.nullcontext()
+    else:
+        tmpdir = tempfile.TemporaryDirectory(prefix="godeps-gomodcache-")
+        gomodcache_dir = Path(tmpdir.name)
+        cleanup_context = tmpdir
 
-    def write_results(results: list[NameVersion], filename: str) -> None:
-        log.debug("writing %s", output_dir / filename)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_dir.joinpath(filename).write_text("\n".join(map(str, results)))
+    with cleanup_context:
+        resolver = GomodResolver(module_dir, gomodcache_dir, go_executable)
+        if args.vendor:
+            _check_vendor(resolver, output_dir)
+        else:
+            _check_download(resolver, output_dir)
 
-    write_results(sorted(resolver.parse_download()), "download.txt")
-    write_results(sorted(resolver.parse_gomodcache()), "gomodcache.txt")
-    write_results(sorted(resolver.parse_list_deps(pattern="all")), "listdeps_all.txt")
-    write_results(sorted(resolver.parse_list_deps(pattern="./...")), "listdeps_threedot.txt")
-    if module_dir.joinpath("vendor").exists():
-        write_results(sorted(resolver.parse_vendor()), "vendor.txt")
-        write_results(sorted(resolver.parse_vendor(drop_unused=False)), "vendor_with_unused.txt")
+
+def _check_download(resolver: GomodResolver, output_dir: Path) -> None:
+    log.info("downloading and identifying dependencies")
+    download = sorted(resolver.parse_download())
+    gomodcache = sorted(resolver.parse_gomodcache())
+    listdeps_all = sorted(resolver.parse_list_deps(pattern="all"))
+    listdeps_threedot = sorted(resolver.parse_list_deps(pattern="./..."))
+
+    _write_results(download, output_dir / "download.txt")
+    _write_results(gomodcache, output_dir / "gomodcache.txt")
+    _write_results(listdeps_all, output_dir / "listdeps_all.txt")
+    _write_results(listdeps_threedot, output_dir / "listdeps_threedot.txt")
+
+    if download_diff := _get_diff(map(str, download), map(str, gomodcache)):
+        log.info("diffing downloaded modules: identified x actual")
+        print(download_diff)
+    else:
+        log.info("diffing downloaded modules: perfect match")
+
+
+def _check_vendor(resolver: GomodResolver, output_dir: Path) -> None:
+    vendor_dir = resolver.module_dir / "vendor"
+    if not vendor_dir.exists():
+        log.info("vendoring dependencies")
+        resolver.vendor_deps()
+
+    log.info("identifying vendored dependencies")
+    vendor = sorted(resolver.parse_vendor())
+    vendor_with_unused = sorted(resolver.parse_vendor(drop_unused=False))
+
+    _write_results(vendor, output_dir / "vendor.txt")
+    _write_results(vendor_with_unused, output_dir / "vendor_with_unused.txt")
+
+    if vendor_diff := _diff_vendor_modules(vendor, vendor_dir):
+        log.info("diffing vendor dirs: identified x actual")
+        print(vendor_diff)
+    else:
+        log.info("diffing vendor dirs: perfect match")
+
+
+def _write_results(results: list[NameVersion], filepath: Path) -> None:
+    log.info("writing %s", filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    filepath.write_text("\n".join(map(str, results)))
+
+
+def _get_diff(left: Iterable[str], right: Iterable[str]) -> str:
+    return "\n".join(difflib.unified_diff(sorted(left), sorted(right), lineterm=""))
+
+
+def _diff_vendor_modules(vendor_modules: Iterable[NameVersion], vendor_dir: Path) -> str:
+    identified_vendor_dirs = {Path(module_name) for module_name, _ in vendor_modules}
+
+    def find_unknown_vendor_dirs(vendor_subdir: Path) -> Iterator[Path]:
+        relpath_from_vendor = vendor_subdir.relative_to(vendor_dir)
+        if any(
+            relpath_from_vendor.is_relative_to(known_path) for known_path in identified_vendor_dirs
+        ):
+            return
+        child_paths = list(vendor_subdir.iterdir())
+        if any(child_path.is_file() for child_path in child_paths):
+            yield relpath_from_vendor
+        else:
+            for child_dir in filter(Path.is_dir, child_paths):
+                yield from find_unknown_vendor_dirs(child_dir)
+
+    actual_vendor_dirs = {p for p in identified_vendor_dirs if vendor_dir.joinpath(p).exists()}
+    actual_vendor_dirs.update(
+        unknown_dir
+        for vendor_subdir in filter(Path.is_dir, vendor_dir.iterdir())
+        for unknown_dir in find_unknown_vendor_dirs(vendor_subdir)
+    )
+
+    return _get_diff(map(str, identified_vendor_dirs), map(str, actual_vendor_dirs))
 
 
 if __name__ == "__main__":
