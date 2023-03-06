@@ -300,7 +300,8 @@ def _check_vendor(resolver: GomodResolver, output_dir: Path) -> None:
 def _write_results(results: list[NameVersion], filepath: Path) -> None:
     log.info("writing %s", filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
-    filepath.write_text("\n".join(map(str, results)))
+    with filepath.open("w") as f:
+        print("\n".join(map(str, results)), file=f)
 
 
 def _get_diff(left: Iterable[str], right: Iterable[str]) -> str:
