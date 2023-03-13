@@ -14,20 +14,20 @@ venv:
 fmt:
 	. venv/bin/activate && \
 	black src/ && \
-	isort src/
+	ruff check --fix-only src/
 
 .PHONY: check
-check: black isort mypy
+check: black ruff mypy
 
 .PHONY: black
 black:
 	. venv/bin/activate && \
 	black --check --diff src/
 
-.PHONY: isort
-isort:
+.PHONY: ruff
+ruff:
 	. venv/bin/activate && \
-	isort --check --diff --color src/
+	ruff check src/
 
 .PHONY: mypy
 mypy:

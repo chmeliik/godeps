@@ -185,7 +185,7 @@ class GomodResolver:
 
         return {
             NameVersion.from_module(module)
-            for module, has_packages in zip(modules, module_has_packages)
+            for module, has_packages in zip(modules, module_has_packages, strict=True)
             if (
                 not module.main
                 and not is_wildcard_replacement(module)

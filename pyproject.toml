@@ -13,16 +13,26 @@ requires-python = ">=3.11"
 godeps = "godeps:main"
 
 [project.optional-dependencies]
-dev = ["black", "isort[colors]", "mypy"]
+dev = ["black", "ruff", "mypy"]
 
 
 [tool.black]
 line-length = 100
 
 
-[tool.isort]
-profile = "black"
-line_length = 100
+[tool.ruff]
+line-length = 100
+select = [
+    "F",    # pyflakes
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "S",    # flake8-bandit
+    "B",    # flake8-bugbear
+    "A",    # flake8-builting
+    "SIM",  # flake8-simplify
+]
+show-source = true
 
 
 [tool.mypy]
