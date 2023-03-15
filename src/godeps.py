@@ -49,6 +49,7 @@ class Package(CamelModel):
     import_path: str
     module: Optional[Module]
     standard: bool = False
+    deps: list[str] = []
 
 
 class NameVersion(NamedTuple):
@@ -79,8 +80,16 @@ class NameVersion(NamedTuple):
         return cls(name, version)
 
 
+def get_names_and_versions(modules: Iterable[Module]) -> list[NameVersion]:
+    return sorted({NameVersion.from_module(module) for module in modules if not module.main})
+
+
+def get_module_names_and_versions(packages: Iterable[Package]) -> list[NameVersion]:
+    return get_names_and_versions(package.module for package in packages if package.module)
+
+
 class GomodResolver:
-    """Resolves the dependencies (modules) of a Go module."""
+    """Resolves the dependencies of a Go module."""
 
     def __init__(self, module_dir: Path, gomodcache: Path, go_executable: str = "go") -> None:
         """Create a GomodResolver.
@@ -93,29 +102,26 @@ class GomodResolver:
         self.gomodcache = gomodcache
         self.go_executable = go_executable
 
-    def parse_download(self) -> set[NameVersion]:
+    def parse_download(self) -> list[Module]:
         """Parse modules from `go mod download -json`."""
-        return {
-            NameVersion.from_module(module)
-            for module in map(
-                Module.parse_obj,
-                _load_json_stream(self._run_go(["mod", "download", "-json"])),
-            )
-            if not module.main
-        }
+        return list(
+            map(Module.parse_obj, _load_json_stream(self._run_go(["mod", "download", "-json"])))
+        )
 
-    def parse_list_deps(self, pattern: Literal["all", "./..."] = "all") -> set[NameVersion]:
-        """Parse modules from `go list -deps -json ./...` or `go list -deps -json all`."""
-        return {
-            NameVersion.from_module(package.module)
-            for package in map(
+    def parse_list_deps(self, pattern: Literal["all", "./..."] = "all") -> list[Package]:
+        """Parse packages from `go list -deps -json ./...` or `go list -deps -json all`."""
+        return list(
+            map(
                 Package.parse_obj,
-                _load_json_stream(self._run_go(["list", "-deps", "-json", pattern])),
+                _load_json_stream(
+                    self._run_go(
+                        ["list", "-deps", "-json=ImportPath,Module,Standard,Deps", pattern]
+                    )
+                ),
             )
-            if package.module and not package.module.main
-        }
+        )
 
-    def parse_gomodcache(self) -> set[NameVersion]:
+    def parse_gomodcache(self) -> list[Module]:
         """Parse modules from the module cache.
 
         https://go.dev/ref/mod#module-cache
@@ -126,19 +132,19 @@ class GomodResolver:
             first, *rest = s.split("!")
             return first + "".join(map(str.capitalize, rest))
 
-        def parse_zipfile_path(zipfile: Path) -> NameVersion:
+        def parse_zipfile_path(zipfile: Path) -> Module:
             # filepath ends with @v/<version>.zip
             name = zipfile.relative_to(download_dir).parent.parent.as_posix()
             version = zipfile.stem
-            return NameVersion(un_exclamation_mark(name), un_exclamation_mark(version))
+            return Module(path=un_exclamation_mark(name), version=un_exclamation_mark(version))
 
-        return set(map(parse_zipfile_path, download_dir.rglob("*.zip")))
+        return list(map(parse_zipfile_path, download_dir.rglob("*.zip")))
 
     def vendor_deps(self) -> None:
         """Run `go mod vendor` to vendor dependencies."""
         self._run_go(["mod", "vendor"])
 
-    def parse_vendor(self, drop_unused: bool = True) -> set[NameVersion]:
+    def parse_vendor(self, drop_unused: bool = True) -> list[Module]:
         """Parse modules from vendor/modules.txt.
 
         :param drop_unused: don't include modules that have no packages in modules.txt
@@ -183,15 +189,15 @@ class GomodResolver:
         def is_wildcard_replacement(module: Module) -> bool:
             return module.replace is not None and not module.version
 
-        return {
-            NameVersion.from_module(module)
+        return [
+            module
             for module, has_packages in zip(modules, module_has_packages, strict=True)
             if (
                 not module.main
                 and not is_wildcard_replacement(module)
                 and (has_packages or not drop_unused)
             )
-        }
+        ]
 
     def _run_go(self, go_cmd: list[str]) -> str:
         cmd = [self.go_executable, *go_cmd]
@@ -234,6 +240,9 @@ def main() -> None:
     ap.add_argument(
         "--vendor", action="store_true", help="vendor dependencies instead of downloading"
     )
+    ap.add_argument(
+        "--deptree", action="store_true", help="print the dependency tree of the *packages* used"
+    )
     ap.add_argument("--go", default="go", help="the go executable to use, defaults to 'go'")
 
     args = ap.parse_args()
@@ -257,13 +266,16 @@ def main() -> None:
         else:
             _check_download(resolver, output_dir)
 
+        if args.deptree:
+            _print_deptree(resolver)
+
 
 def _check_download(resolver: GomodResolver, output_dir: Path) -> None:
     log.info("downloading and identifying dependencies")
-    download = sorted(resolver.parse_download())
-    gomodcache = sorted(resolver.parse_gomodcache())
-    listdeps_all = sorted(resolver.parse_list_deps(pattern="all"))
-    listdeps_threedot = sorted(resolver.parse_list_deps(pattern="./..."))
+    download = get_names_and_versions(resolver.parse_download())
+    gomodcache = get_names_and_versions(resolver.parse_gomodcache())
+    listdeps_all = get_module_names_and_versions(resolver.parse_list_deps(pattern="all"))
+    listdeps_threedot = get_module_names_and_versions(resolver.parse_list_deps(pattern="./..."))
 
     _write_results(download, output_dir / "download.txt")
     _write_results(gomodcache, output_dir / "gomodcache.txt")
@@ -284,8 +296,8 @@ def _check_vendor(resolver: GomodResolver, output_dir: Path) -> None:
         resolver.vendor_deps()
 
     log.info("identifying vendored dependencies")
-    vendor = sorted(resolver.parse_vendor())
-    vendor_with_unused = sorted(resolver.parse_vendor(drop_unused=False))
+    vendor = get_names_and_versions(resolver.parse_vendor())
+    vendor_with_unused = get_names_and_versions(resolver.parse_vendor(drop_unused=False))
 
     _write_results(vendor, output_dir / "vendor.txt")
     _write_results(vendor_with_unused, output_dir / "vendor_with_unused.txt")
@@ -332,6 +344,23 @@ def _diff_vendor_modules(vendor_modules: Iterable[NameVersion], vendor_dir: Path
     )
 
     return _get_diff(map(str, identified_vendor_dirs), map(str, actual_vendor_dirs))
+
+
+def _print_deptree(resolver: GomodResolver):
+    depstack: list[set[str]] = []
+
+    for package in reversed(resolver.parse_list_deps()):
+        if not package.module:
+            continue
+
+        name = package.import_path
+        version = "main" if package.module.main else NameVersion.from_module(package.module).version
+
+        while depstack and name not in depstack[-1]:
+            depstack.pop()
+
+        print(f"{' ' * 4 * len(depstack)}{name}@{version}")
+        depstack.append(set(package.deps))
 
 
 if __name__ == "__main__":
