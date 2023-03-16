@@ -22,3 +22,10 @@ if there are no local replacements:
     download == gomodcache == vendor_with_unused >= vendor >= listdeps_all >= listdeps_threedot
 
 local replacements do not appear in download or gomodcache (do appear in the others)
+
+
+
+what we need for cachi2:
+    download_plus_local_paths = download + listdeps_threedot
+
+    (same as download but includes locally replaced modules)

@@ -30,6 +30,7 @@ godeps: writing download.txt
 godeps: writing gomodcache.txt
 godeps: writing listdeps_all.txt
 godeps: writing listdeps_threedot.txt
+godeps: writing download_plus_local_paths.txt
 godeps: diffing downloaded modules: perfect match
 ```
 
