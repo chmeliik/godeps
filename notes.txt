@@ -26,7 +26,7 @@ local replacements do not appear in download or gomodcache (do appear in the oth
 
 
 what we need for cachi2:
-    download_plus_local_paths = download + listdeps_threedot
+    download_plus_local_paths = download + listdeps_all
 
     (same as download but includes locally replaced modules)
 

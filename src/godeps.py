@@ -282,7 +282,7 @@ def _check_download(resolver: GomodResolver, output_dir: Path) -> None:
     _write_results(listdeps_all, output_dir / "listdeps_all.txt")
     _write_results(listdeps_threedot, output_dir / "listdeps_threedot.txt")
 
-    download_plus_local_paths = sorted(set(download).union(listdeps_threedot))
+    download_plus_local_paths = sorted(set(download).union(listdeps_all))
     _write_results(download_plus_local_paths, output_dir / "download_plus_local_paths.txt")
 
     if download_diff := _get_diff(map(str, download), map(str, gomodcache)):
