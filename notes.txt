@@ -29,3 +29,12 @@ what we need for cachi2:
     download_plus_local_paths = download + listdeps_threedot
 
     (same as download but includes locally replaced modules)
+
+
+
+--- further observations ---
+
+the sandboxed-containers-operator repo (at the specific commit) wasn't tidied (go mod tidy)
+
+for a tidy repo:
+    download == gomodcache == vendor_with_unused == vendor >= listdeps_all >= listdeps_threedot
