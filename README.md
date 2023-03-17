@@ -75,4 +75,25 @@ godeps: diffing vendor dirs: identified x actual
 in the vendor/ directory corresponds to the original name, the algorithm that parses
 modules.txt reports the final name.*
 
+## Testing procedure
+
+Uses [fd][fd-find] as a more convenient `find` replacement.
+
+```shell
+# write results to all module directories
+fd go.mod -x godeps -m {//} -o {//} -c {//}/.gocache
+fd go.mod -x godeps -m {//} -o {//} -c {//}/.gocache --vendor
+
+# verify that download == gomodcache for all modules
+fd go.mod -x diff {//}/download.txt {//}/gomodcache.txt
+
+# verify that download_plus_local_paths == vendor for all modules
+fd go.mod -x diff {//}/download_plus_local_paths.txt {//}/vendor.txt
+
+# verify that vendor >= listdeps_all >= listdeps_threedot for all modules
+fd go.mod -x diff --color=always {//}/vendor.txt {//}/listdeps_all.txt
+fd go.mod -x diff --color=always {//}/listdeps_all.txt {//}/listdeps_threedot.txt
+```
+
 [controller-runtime-replace]: https://github.com/redhat-appstudio/managed-gitops/blob/588d1d2f204c537e89416ffc2cec5e9ea51297eb/backend/go.mod#L112
+[fd-find]: https://github.com/sharkdp/fd
