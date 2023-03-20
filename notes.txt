@@ -38,3 +38,11 @@ the sandboxed-containers-operator repo (at the specific commit) wasn't tidied (g
 
 for a tidy repo:
     download == gomodcache == vendor_with_unused == vendor >= listdeps_all >= listdeps_threedot
+
+
+
+The difference between <any of the complete sources> and listdeps_all comes down to build
+constraints: https://github.com/golang/go/issues/42504
+
+The difference between listdeps_all and listdeps_threedot seems to be tests - listdeps_all does
+report packages (and their modules) used only for testing, listdeps_threedot does not.
