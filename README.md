@@ -237,12 +237,14 @@ report it.*
 
 If the user wants to use vendoring, the `vendor` method is 100% perfect.
 
-If not, there are three options.
+If not, there are four options.
 
 * `download` + `listdeps_all`
   * hope that none of the locally replaced modules are excluded by build constraints
 * `download` + `vendor`
   * but make sure to remove the leftover `vendor/` directory afterwards
+* `download` + pick out locally replaced modules from `go list -m all`
+  * but `go list -m all` downloads some extra junk (`*.info` files for unneeded modules)
 * `vendor_with_unused`
   * happens to match `download` even in untidy cases
   * but make sure to remove the leftover `vendor/` directory afterwards
