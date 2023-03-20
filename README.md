@@ -19,6 +19,17 @@ Get the example Go projects for testing:
 make submodules
 ```
 
+## Module identification methods
+
+See [src/godeps.py](src/godeps.py) for more details on how they're implemented.
+
+* download = `go mod download -json`
+* gomodcache = `$GOMODCACHE/cache/download/**/*.zip`
+* vendor = parse `vendor/modules.txt`
+* vendor\_with\_unused = parse `vendor/modules.txt`, keep modules that don't have packages
+* listdeps\_all = `go list -deps -json all`
+* listdeps\_threedot = `go list -deps -json ./...`
+
 ## Usage
 
 Identify the dependencies of a module in various ways:
@@ -75,29 +86,44 @@ godeps: diffing vendor dirs: identified x actual
 in the vendor/ directory corresponds to the original name, the algorithm that parses
 modules.txt reports the final name.*
 
-## Testing procedure
+## Interesting findings
 
 Uses [fd][fd-find] as a more convenient `find` replacement.
+
+Prepare data for experimentation:
 
 ```shell
 # write results to all module directories
 fd go.mod -x godeps -m {//} -o {//} -c {//}/.gocache
 fd go.mod -x godeps -m {//} -o {//} -c {//}/.gocache --vendor
-
-# verify that download == gomodcache for all modules
-fd go.mod -x diff {//}/download.txt {//}/gomodcache.txt
-
-# verify that download_plus_local_paths == vendor for all modules
-fd go.mod -x diff {//}/download_plus_local_paths.txt {//}/vendor.txt
-
-# verify that vendor >= listdeps_all >= listdeps_threedot for all modules
-fd go.mod -x diff --color=always {//}/vendor.txt {//}/listdeps_all.txt
-fd go.mod -x diff --color=always {//}/listdeps_all.txt {//}/listdeps_threedot.txt
 ```
 
-## Interesting findings
+### The relationship between the module identification methods
 
-### The difference between \<a complete source of modules\> and listdeps\_all
+Check (for all modules at the same time) with:
+
+```shell
+fd go.mod -x diff --color=always {//}/<method1>.txt {//}/<method2>.txt
+```
+
+When the modules are properly tidied (`go mod tidy`) and there are no local replacements:
+
+```text
+download == gomodcache == vendor_with_unused == vendor >= listdeps_all >= listdeps_threedot
+```
+
+When the module is not tidied (some modules in `go.mod` are not actually needed), the `vendor`
+method notices the not-needed modules. Note that the `vendor` method is consistent with the
+actual content of the `vendor/` directory.
+
+```text
+download == gomodcache == vendor_with_unused > vendor >= listdeps_all >= listdeps_threedot
+```
+
+When there are local replacements, they're not listed either by `download` or by `gomodcache`.
+They are, with varying levels of reliability, listed by the others.
+
+### The difference between \<a reliable method\> and listdeps\_all
 
 ```shell
 $ cd managed-gitops/tests-e2e
@@ -170,6 +196,56 @@ github.com/containerd/containerd/remotes/docker
 
 For all modules reported by listdeps\_all and not by listdeps\_threedot, the import path
 contains a `*.test` package - that should mean the module is a test-only dependency.
+
+## Conclusion
+
+### Module identification methods vs. corner cases
+
+*See [module identification methods](#module-identification-methods)*
+
+method X lists modules that are...
+
+|                      | build-constrained | test-only | local   | untidy |
+|--------------------- | ----------------- | --------- | ------- | ------ |
+| download             | ✅                | ✅        | ❌      | ✅     |
+| gomodcache           | ✅                | ✅        | ❌      | ✅     |
+| vendor               | ✅                | ✅        | ✅      | ❌     |
+| vendor\_with\_unused | ✅                | ✅        | ✅      | ✅     |
+| listdeps\_all        | ❌                | ✅        | ✅      | ❌     |
+| listdeps\_threedot   | ❌                | ❌        | ✅      | ❌     |
+
+* build-constrained = only required for a specific combination of build tags
+  * see [interesting finding 2](#the-difference-between-a-reliable-method-and-listdeps_all)
+* test-only = only required for tests
+  * see [interesting finding 3](#the-difference-between-listdeps_all-and-listdeps_threedot)
+* local = `replace module/name => ./local/path` in go.mod
+* untidy = `go mod tidy` would remove this module
+
+Note: the method lists the module if NONE of the negative conditions apply. For example,
+if a module is local and build-constrained, the `listdeps_all` method will not list it.
+
+### Matching what we download
+
+The `download` method always lists the same modules as `gomodcache`. *N.B. tidiness: when
+the module is not tidy, the untidy module does get downloaded and we should report it.*
+
+The `vendor` method matches the modules present in `vendor/`. *N.B. tidiness: when
+the module is not tidy, the untidy module __does not__ get vendored and we __should not__
+report it.*
+
+### Crafting a universally reliable method
+
+If the user wants to use vendoring, the `vendor` method is 100% perfect.
+
+If not, there are three options.
+
+* `download` + `listdeps_all`
+  * hope that none of the locally replaced modules are excluded by build constraints
+* `download` + `vendor`
+  * but make sure to remove the leftover `vendor/` directory afterwards
+* `vendor_with_unused`
+  * happens to match `download` even in untidy cases
+  * but make sure to remove the leftover `vendor/` directory afterwards
 
 [controller-runtime-replace]: https://github.com/redhat-appstudio/managed-gitops/blob/588d1d2f204c537e89416ffc2cec5e9ea51297eb/backend/go.mod#L112
 [fd-find]: https://github.com/sharkdp/fd
