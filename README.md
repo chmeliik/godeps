@@ -245,6 +245,7 @@ If not, there are four options.
   * but make sure to remove the leftover `vendor/` directory afterwards
 * `download` + pick out locally replaced modules from `go list -m all`
   * but `go list -m all` downloads some extra junk (`*.info` files for unneeded modules)
+  * and it lists false positives even for local modules /facepalm
 * `vendor_with_unused`
   * happens to match `download` even in untidy cases
   * but make sure to remove the leftover `vendor/` directory afterwards
