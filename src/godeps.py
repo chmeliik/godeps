@@ -153,8 +153,6 @@ class GomodResolver:
 
         def parse_module_line(line: str) -> Module:
             match line.removeprefix("# ").split():
-                case [name]:
-                    return Module(path=name, main=True)
                 case [name, version]:
                     return Module(path=name, version=version)
                 case [name, "=>", path]:
@@ -192,11 +190,7 @@ class GomodResolver:
         return [
             module
             for module, has_packages in zip(modules, module_has_packages, strict=True)
-            if (
-                not module.main
-                and not is_wildcard_replacement(module)
-                and (has_packages or not drop_unused)
-            )
+            if not is_wildcard_replacement(module) and (has_packages or not drop_unused)
         ]
 
     def _run_go(self, go_cmd: list[str]) -> str:
